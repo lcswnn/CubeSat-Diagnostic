@@ -55,6 +55,11 @@ st.markdown("""
         border-bottom: 1px solid #21262d;
         padding-bottom: 8px;
     }
+    /* Constrain column filter expander to scrollable container */
+    [data-testid="stExpander"] details > div[data-testid="stExpanderDetails"] {
+        max-height: 400px;
+        overflow-y: auto;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -69,6 +74,96 @@ def load_data(uploaded_file):
         return pd.read_excel(uploaded_file)
     else:
         return pd.read_csv(uploaded_file)
+
+# ---------------------------------------------------------------------------
+# Dynamic Column Classifier
+# ---------------------------------------------------------------------------
+# Instead of a hardcoded exclusion list, we analyze each numeric column and
+# classify it into one of several categories. Only "sensor" columns are fed
+# to the anomaly detector. Users can override any classification.
+# ---------------------------------------------------------------------------
+
+_NAME_PATTERNS = {
+    'position': ['x_ecef', 'y_ecef', 'z_ecef', 'x_eci', 'y_eci', 'z_eci',
+                  'vx_eci', 'vy_eci', 'vz_eci', 'longitude', 'latitude', 'altitude',
+                  'gyro_x', 'gyro_y', 'gyro_z',
+                  'mag_x', 'mag_y', 'mag_z'],
+    'timestamp': ['mes', 'dia', 'hora', 'year', 'segundo', 'minuto'],
+    'counter':   ['package_counter'],
+    'binary':    ['state_charge', 'state_health',
+                  'adm_status', 'eps_status', 'heater_status',
+                  'adcs_status', 'payload_status', 'camera_mode'],
+}
+
+def _classify_column(col_name, values):
+    """Return (category, reason) for a single numeric column.
+
+    Categories
+    ----------
+    sensor    – continuous health/telemetry signal  -> analyze
+    binary    – on/off command or status flag       -> exclude
+    counter   – monotonically increasing counter    -> exclude
+    position  – orbital position / velocity         -> exclude
+    timestamp – time component                      -> exclude
+    constant  – no variation                        -> exclude
+    """
+    col_lower = col_name.lower()
+
+    # --- Name-based checks (fast, high confidence) ---
+    for cat, patterns in _NAME_PATTERNS.items():
+        if col_lower in [p.lower() for p in patterns]:
+            return cat, f"Known {cat} column"
+
+    # --- Statistical checks ---
+    clean = values[~np.isnan(values)]
+    if len(clean) < 20:
+        return 'constant', 'Too few non-null values'
+
+    n_unique = len(np.unique(clean))
+    std = np.std(clean)
+
+    # Constant
+    if std < 1e-8:
+        return 'constant', 'Zero variance'
+
+    # Binary / near-binary (<=5 distinct values)
+    if n_unique <= 5:
+        return 'binary', f'Only {n_unique} unique values — likely status/command flag'
+
+    # Monotonic counter detection
+    diffs = np.diff(clean)
+    pct_nonneg = np.mean(diffs >= 0)
+    pct_nonpos = np.mean(diffs <= 0)
+    if pct_nonneg > 0.97 and n_unique > 50:
+        return 'counter', f'{pct_nonneg:.0%} non-decreasing — monotonic counter'
+    if pct_nonpos > 0.97 and n_unique > 50:
+        return 'counter', f'{pct_nonpos:.0%} non-increasing — monotonic counter'
+
+    # Low-entropy discrete signal (e.g. status codes with 6-20 levels)
+    unique_ratio = n_unique / len(clean)
+    if n_unique <= 20 and unique_ratio < 0.005:
+        return 'binary', f'{n_unique} unique values across {len(clean):,} rows — discrete status'
+
+    # Everything else is a sensor
+    return 'sensor', 'Continuous telemetry signal'
+
+
+@st.cache_data
+def classify_columns(df):
+    """Classify every numeric column. Returns DataFrame with:
+       column, category, reason
+    """
+    numeric_df = df.select_dtypes(include=[np.number])
+    rows = []
+    for col in numeric_df.columns:
+        cat, reason = _classify_column(col, numeric_df[col].values)
+        rows.append({'column': col, 'category': cat, 'reason': reason})
+    return pd.DataFrame(rows)
+
+
+# ---------------------------------------------------------------------------
+# Feature computation
+# ---------------------------------------------------------------------------
 
 def compute_features_for_column(values, i, window_size, col):
     features = {}
@@ -99,28 +194,16 @@ def compute_features_for_column(values, i, window_size, col):
     features['var_div_len'] = features['var'] / max(len(values), 1)
     return features
 
-def compute_features_per_column(df, window_size=500):
-    exclude_cols = [
-        # Timestamp components
-        'mes', 'dia', 'hora', 'year', 'segundo', 'minuto',
-        # Orbital position and velocity — predictable orbital motion, not health signals
-        'x_ecef', 'y_ecef', 'z_ecef',
-        'x_eci', 'y_eci', 'z_eci',
-        'vx_eci', 'vy_eci', 'vz_eci',
-        'longitude', 'latitude', 'altitude',
-        # Counters — always increasing, not health signals
-        'package_counter'
-    ]
+
+def compute_features_per_column(df, sensor_cols, window_size=500):
+    """Compute windowed features only for the given sensor columns."""
     numeric_df = df.select_dtypes(include=[np.number])
     results = []
-    for col in numeric_df.columns:
-        if col.lower() in [e.lower() for e in exclude_cols]:
+    for col in sensor_cols:
+        if col not in numeric_df.columns:
             continue
         col_values = numeric_df[col].dropna().values
         if col_values.std() < 1e-6:
-            continue
-        unique_vals = np.unique(col_values)
-        if len(unique_vals) < max(3, len(col_values) * 0.05):
             continue
         col_values = (col_values - col_values.mean()) / col_values.std()
         for i in range(0, len(numeric_df), window_size):
@@ -131,6 +214,22 @@ def compute_features_per_column(df, window_size=500):
             results.append(features)
     return pd.DataFrame(results)
 
+
+def add_derived_features(frame):
+    f = frame.copy()
+    f['cv'] = f['std'] / (f['mean'].abs() + 1e-8)
+    f['diff_var_ratio'] = f['diff_var'] / (f['var'] + 1e-8)
+    f['diff2_var_ratio'] = f['diff2_var'] / (f['var'] + 1e-8)
+    f['peak_density'] = f['n_peaks'] / (f['len'] + 1e-8)
+    f['smooth10_peak_density'] = f['smooth10_n_peaks'] / (f['len'] + 1e-8)
+    f['smooth20_peak_density'] = f['smooth20_n_peaks'] / (f['len'] + 1e-8)
+    f['smooth10_ratio'] = f['smooth10_n_peaks'] / (f['n_peaks'] + 1e-8)
+    f['smooth20_ratio'] = f['smooth20_n_peaks'] / (f['n_peaks'] + 1e-8)
+    f['kurtosis_skew'] = f['kurtosis'] * f['skew']
+    f['mean_var_ratio'] = f['mean'] / (f['var'] + 1e-8)
+    return f
+
+
 def severity_label(score):
     if score >= 0.85:
         return "high", "🔴 High"
@@ -139,12 +238,12 @@ def severity_label(score):
     else:
         return "low", "🟢 Low"
 
+
 def plot_anomaly_window(df, plot_col, window_start, window_end, score):
     start = max(0, window_start - 250)
     end = min(len(df), window_end + 250)
     window_data = df[plot_col].iloc[start:end].reset_index(drop=True)
 
-    # Use timestamps if available and valid, otherwise use row numbers
     timestamp_col = None
     for col in ['UTC_Timestamp', 'timestamp', 'time', 'Time', 'date', 'Date']:
         if col in df.columns:
@@ -154,8 +253,7 @@ def plot_anomaly_window(df, plot_col, window_start, window_end, score):
     if timestamp_col:
         try:
             raw = df[timestamp_col].iloc[start:end].reset_index(drop=True)
-            
-            # Handle Quetzal-1 format: "16:43:55 - 28/04/2020"
+
             def parse_quetzal_timestamp(ts):
                 try:
                     parts = str(ts).split(' - ')
@@ -166,7 +264,7 @@ def plot_anomaly_window(df, plot_col, window_start, window_end, score):
                     return pd.NaT
 
             timestamps = raw.apply(parse_quetzal_timestamp)
-            
+
             if timestamps.notna().sum() > len(timestamps) * 0.5:
                 x = timestamps
                 x_label = "Time"
@@ -202,7 +300,6 @@ def plot_anomaly_window(df, plot_col, window_start, window_end, score):
         name=plot_col
     ))
 
-    # Anomaly region markers
     anomaly_x_start = x.iloc[window_start - start] if hasattr(x, 'iloc') else window_start - start
     anomaly_x_end = x.iloc[min(window_end - start, len(x) - 1)] if hasattr(x, 'iloc') else min(window_end - start, len(window_data) - 1)
 
@@ -221,22 +318,19 @@ def plot_anomaly_window(df, plot_col, window_start, window_end, score):
         paper_bgcolor='#0d1117',
         plot_bgcolor='#161b22',
         font=dict(color='#8b949e'),
-        xaxis=dict(
-            title=x_label,
-            gridcolor='#21262d',
-            showgrid=True
-        ),
-        yaxis=dict(
-            title=plot_col,
-            gridcolor='#21262d',
-            showgrid=True
-        ),
+        xaxis=dict(title=x_label, gridcolor='#21262d', showgrid=True),
+        yaxis=dict(title=plot_col, gridcolor='#21262d', showgrid=True),
         margin=dict(l=20, r=20, t=40, b=40),
         height=400,
         showlegend=False
     )
 
     return fig
+
+
+# ---------------------------------------------------------------------------
+# UI — File Upload
+# ---------------------------------------------------------------------------
 
 uploaded_file = st.file_uploader("Choose a file (.csv or .xlsx)")
 if uploaded_file is not None:
@@ -253,21 +347,91 @@ else:
 
 model = joblib.load('model/model.pkl')
 
+# ---------------------------------------------------------------------------
+# UI — Column Classification (shown after upload, before detection)
+# ---------------------------------------------------------------------------
+
+if uploaded_file is not None:
+    col_classes = classify_columns(df)
+
+    sensor_cols = col_classes[col_classes['category'] == 'sensor']['column'].tolist()
+    excluded = col_classes[col_classes['category'] != 'sensor']
+
+    if 'col_overrides' not in st.session_state:
+        st.session_state['col_overrides'] = {}
+
+    with st.expander(f"Column filter — {len(sensor_cols)} sensor channels, {len(excluded)} auto-excluded", expanded=False):
+        st.caption("Columns are automatically classified by statistical analysis. Override any column below.")
+
+        _CATEGORY_ICONS = {
+            'sensor': '📡', 'binary': '🔘', 'counter': '🔢',
+            'position': '🌍', 'timestamp': '🕐', 'constant': '⬜'
+        }
+
+        for cat in ['binary', 'counter', 'position', 'timestamp', 'constant']:
+            cat_cols = excluded[excluded['category'] == cat]
+            if cat_cols.empty:
+                continue
+            icon = _CATEGORY_ICONS.get(cat, '')
+            st.markdown(f"**{icon} {cat.title()}** — {len(cat_cols)} columns excluded")
+            for _, r in cat_cols.iterrows():
+                c1, c2, c3 = st.columns([3, 5, 2])
+                with c1:
+                    st.code(r['column'], language=None)
+                with c2:
+                    st.caption(r['reason'])
+                with c3:
+                    if st.checkbox("Include", key=f"inc_{r['column']}"):
+                        st.session_state['col_overrides'][r['column']] = 'sensor'
+
+        st.markdown(f"**📡 Sensor** — {len(sensor_cols)} columns included")
+        exclude_choices = st.multiselect(
+            "Exclude any sensor columns:",
+            options=sensor_cols,
+            default=[],
+            key="manual_exclude"
+        )
+        for col in exclude_choices:
+            st.session_state['col_overrides'][col] = 'excluded'
+
+    # Build final sensor list with overrides applied
+    final_sensor_cols = []
+    for _, r in col_classes.iterrows():
+        override = st.session_state['col_overrides'].get(r['column'])
+        if override == 'sensor':
+            final_sensor_cols.append(r['column'])
+        elif override == 'excluded':
+            continue
+        elif r['category'] == 'sensor':
+            final_sensor_cols.append(r['column'])
+
+    st.session_state['final_sensor_cols'] = final_sensor_cols
+
+# ---------------------------------------------------------------------------
+# UI — Run Detection
+# ---------------------------------------------------------------------------
+
 if st.button("🔍 Run Anomaly Detection", type="primary"):
+    sensor_cols = st.session_state.get('final_sensor_cols', [])
+    if not sensor_cols:
+        st.error("No sensor columns to analyze. Check the column filter above.")
+        st.stop()
+
     drop_cols = ['segment', 'anomaly', 'train', 'channel']
     existing_drop = [c for c in drop_cols if c in df.columns]
     X = df.drop(columns=existing_drop)
     model_features = ['mean', 'var', 'std', 'kurtosis', 'skew']
 
     if not any(col in X.columns for col in model_features):
-        progress = st.progress(0, text="Analyzing columns...")
-        X = compute_features_per_column(df)
+        progress = st.progress(0, text=f"Analyzing {len(sensor_cols)} sensor channels...")
+        X = compute_features_per_column(df, sensor_cols)
         if X.empty:
-            st.error("No columns passed the quality filters. Your data may have too many constant or binary columns. Try uploading a file with more varied sensor readings.")
+            st.error("No columns produced valid features. Try including more columns in the filter above.")
             st.stop()
         progress.progress(50, text="Running model...")
         meta = X[['window_start', 'window_end', 'column']].copy()
         X_model = X.drop(columns=['window_start', 'window_end', 'column'])
+        X_model = add_derived_features(X_model)
         X_model = X_model[model.feature_names_in_]
         proba = model.predict_proba(X_model)[:, 1]
         meta['anomaly_score'] = proba
@@ -275,33 +439,41 @@ if st.button("🔍 Run Anomaly Detection", type="primary"):
         for col_name in meta['column'].unique():
             col_mask = meta['column'] == col_name
             col_data = meta[col_mask].copy()
-            
-            # Fixed threshold instead of relative percentile
             col_data['anomaly_detected'] = col_data['anomaly_score'] >= 0.65
             flagged_rows.append(col_data[col_data['anomaly_detected']])
-        anomaly_rows = pd.concat(flagged_rows).reset_index(drop=True)
-        anomaly_summary = (
-            anomaly_rows.groupby(['window_start', 'window_end'])
-            .agg(
-                anomalous_columns=('column', lambda cols: ', '.join(cols)),
-                avg_score=('anomaly_score', 'mean')
+        if flagged_rows:
+            anomaly_rows = pd.concat(flagged_rows).reset_index(drop=True)
+        else:
+            anomaly_rows = pd.DataFrame(columns=meta.columns)
+        if not anomaly_rows.empty:
+            anomaly_summary = (
+                anomaly_rows.groupby(['window_start', 'window_end'])
+                .agg(
+                    anomalous_columns=('column', lambda cols: ', '.join(cols)),
+                    avg_score=('anomaly_score', 'mean')
+                )
+                .reset_index()
+                .sort_values('avg_score', ascending=False)
+                .reset_index(drop=True)
             )
-            .reset_index()
-            .sort_values('avg_score', ascending=False)
-            .reset_index(drop=True)
-        )
+        else:
+            anomaly_summary = pd.DataFrame(columns=['window_start', 'window_end', 'anomalous_columns', 'avg_score'])
         progress.progress(100, text="Done!")
         st.session_state['anomaly_summary'] = anomaly_summary
         st.session_state['anomaly_count'] = len(anomaly_summary)
         st.session_state['total_windows'] = len(meta['window_start'].unique())
         st.session_state['df'] = df
-        st.session_state['numeric_cols'] = df.select_dtypes(include=[np.number]).columns.tolist()
+        st.session_state['numeric_cols'] = sensor_cols
     else:
         predictions = model.predict(X)
         df['anomaly_detected'] = predictions
         anomaly_count = (predictions == 1).sum()
         st.write(f"Detection complete — {anomaly_count} anomalies found.")
         st.dataframe(df)
+
+# ---------------------------------------------------------------------------
+# UI — Results Display
+# ---------------------------------------------------------------------------
 
 if 'anomaly_summary' in st.session_state:
     anomaly_summary = st.session_state['anomaly_summary']
@@ -310,8 +482,8 @@ if 'anomaly_summary' in st.session_state:
     df = st.session_state['df']
     numeric_cols = st.session_state['numeric_cols']
 
-    high_count = len(anomaly_summary[anomaly_summary['avg_score'] >= 0.85])
-    medium_count = len(anomaly_summary[(anomaly_summary['avg_score'] >= 0.70) & (anomaly_summary['avg_score'] < 0.85)])
+    high_count = len(anomaly_summary[anomaly_summary['avg_score'] >= 0.85]) if not anomaly_summary.empty else 0
+    medium_count = len(anomaly_summary[(anomaly_summary['avg_score'] >= 0.70) & (anomaly_summary['avg_score'] < 0.85)]) if not anomaly_summary.empty else 0
 
     st.markdown('<div class="section-header">Detection Results</div>', unsafe_allow_html=True)
 
@@ -325,6 +497,10 @@ if 'anomaly_summary' in st.session_state:
     with col4:
         st.metric("🟡 Medium Severity", f"{medium_count}")
 
+    if anomaly_summary.empty:
+        st.success("No anomalies detected in this file.")
+        st.stop()
+
     st.markdown('<div class="section-header">Anomaly List — sorted by severity</div>', unsafe_allow_html=True)
 
     cards_html = ""
@@ -332,7 +508,7 @@ if 'anomaly_summary' in st.session_state:
         severity_class, severity_text = severity_label(row['avg_score'])
         cols_list = [c.strip() for c in row['anomalous_columns'].split(',')]
         col_tags = ''.join([f'<span style="display:inline-block;background:#21262d;border:1px solid #30363d;border-radius:4px;padding:2px 8px;margin:2px;font-size:12px;color:#8b949e;">{c}</span>' for c in cols_list])
-        
+
         border_color = {"high": "#f85149", "medium": "#d29922", "low": "#3fb950"}[severity_class]
         score_bg = {"high": "#3d1a1a", "medium": "#2d2208", "low": "#0d2818"}[severity_class]
         score_color = {"high": "#f85149", "medium": "#d29922", "low": "#3fb950"}[severity_class]
