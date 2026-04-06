@@ -148,7 +148,6 @@ def _classify_column(col_name, values):
     return 'sensor', 'Continuous telemetry signal'
 
 
-@st.cache_data
 def classify_columns(df):
     """Classify every numeric column. Returns DataFrame with:
        column, category, reason
@@ -439,7 +438,7 @@ if st.button("🔍 Run Anomaly Detection", type="primary"):
         for col_name in meta['column'].unique():
             col_mask = meta['column'] == col_name
             col_data = meta[col_mask].copy()
-            col_data['anomaly_detected'] = col_data['anomaly_score'] >= 0.65
+            col_data['anomaly_detected'] = col_data['anomaly_score'] >= 0.70
             flagged_rows.append(col_data[col_data['anomaly_detected']])
         if flagged_rows:
             anomaly_rows = pd.concat(flagged_rows).reset_index(drop=True)
