@@ -48,5 +48,9 @@ The user first uploads telemetry data recieved from their CubeSat into the Strea
 <img width="1545" height="955" alt="Screenshot 2026-04-07 at 9 50 52 PM" src="https://github.com/user-attachments/assets/ecc3633b-48c0-4b3a-a5d0-35088edb2821" />
 
 
+## References
 
+- Ruszczak, B., Kotowski, K., Evans, D., & Nalepa, J. (2025). The OPS-SAT benchmark for detecting anomalies in satellite telemetry. *Scientific Data*. https://doi.org/10.1038/s41597-025-05035-3
+
+- Looney, C., & Wenger, E. (2025). Enhancing CubeSat Telemetry Systems for Autonomous Space Missions Utilizing Machine Learning Techniques. *International Telemetering Conference Proceedings*, 60. http://hdl.handle.net/10150/679583
 
