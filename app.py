@@ -13,6 +13,7 @@ st.set_page_config(page_title="CubeSat Diagnostic Tool", layout="wide")
 st.markdown("""
 <style>
     .main { background-color: #0d1117; }
+    .block-container { max-width: 1400px; padding-left: 3rem; padding-right: 3rem; }
     .anomaly-card {
         background: linear-gradient(135deg, #1a1f2e, #16213e);
         border: 1px solid #30363d;
