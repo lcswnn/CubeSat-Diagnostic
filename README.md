@@ -41,6 +41,12 @@ The user first uploads telemetry data recieved from their CubeSat into the Strea
 * No retraining pipeline in the app — if someone wants to fine-tune on their own labeled data, they'd need to manually run model.py with their own dataset
 * Column classifier uses heuristics and a hardcoded name list tuned to OPS-SAT — other missions' naming conventions might get misclassified
 
+## References
+
+- Ruszczak, B., Kotowski, K., Evans, D., & Nalepa, J. (2025). The OPS-SAT benchmark for detecting anomalies in satellite telemetry. *Scientific Data*. https://doi.org/10.1038/s41597-025-05035-3
+
+- Looney, C., & Wenger, E. (2025). Enhancing CubeSat Telemetry Systems for Autonomous Space Missions Utilizing Machine Learning Techniques. *International Telemetering Conference Proceedings*, 60. http://hdl.handle.net/10150/679583
+
 ## Images
 
 <img width="1545" height="955" alt="Screenshot 2026-04-07 at 9 50 17 PM" src="https://github.com/user-attachments/assets/0ab94c51-0f94-452d-8edc-e3653693d86f" />
@@ -48,9 +54,5 @@ The user first uploads telemetry data recieved from their CubeSat into the Strea
 <img width="1545" height="955" alt="Screenshot 2026-04-07 at 9 50 52 PM" src="https://github.com/user-attachments/assets/ecc3633b-48c0-4b3a-a5d0-35088edb2821" />
 
 
-## References
 
-- Ruszczak, B., Kotowski, K., Evans, D., & Nalepa, J. (2025). The OPS-SAT benchmark for detecting anomalies in satellite telemetry. *Scientific Data*. https://doi.org/10.1038/s41597-025-05035-3
-
-- Looney, C., & Wenger, E. (2025). Enhancing CubeSat Telemetry Systems for Autonomous Space Missions Utilizing Machine Learning Techniques. *International Telemetering Conference Proceedings*, 60. http://hdl.handle.net/10150/679583
 
