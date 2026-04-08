@@ -63,8 +63,8 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.title("CubeSat Diagnostic Tool")
-st.write("Upload satellite telemetry data to detect anomalies.")
+st.markdown("<h1 style='text-align: center; font-size: 4rem;'>CubeSat Diagnostic Tool</h1>", unsafe_allow_html=True)
+st.markdown("<p style='text-align: center; color: #8b949e; font-size: 1.2rem;'>Upload satellite telemetry data to detect anomalies.</p>", unsafe_allow_html=True)
 
 df = pd.DataFrame({'Column 1': [1, 2, 3, 4]})
 
