@@ -11,6 +11,7 @@ What it does:
   3. If no labels exist, runs statistical cross-validation:
      - Z-score spike detection as independent second opinion
      - Isolation Forest as unsupervised confirmation
+     - Mahalanobis Distance as distribution-based validation
      - Cross-channel correlation analysis (do multiple channels agree?)
   4. Outputs a summary report to the terminal and saves detailed results to CSV
 """
@@ -209,6 +210,44 @@ def isolation_forest_validate(df, sensor_cols, window_size=500):
     return {k: s for k, s in zip(keys, norm_scores)}
 
 
+def mahalanobis_validate(df, sensor_cols, window_size=500):
+    """Compute Mahalanobis distance for each window using training distribution.
+    Returns a dict of (window_start, col) -> md_score (normalized 0-1).
+    """
+    feat_df = compute_features(df, sensor_cols, window_size)
+    if feat_df.empty:
+        return {}
+
+    keys = list(zip(feat_df['window_start'].astype(int), feat_df['column']))
+    X_md = feat_df.drop(columns=['window_start', 'window_end', 'column'])
+    X_md = add_derived_features(X_md)
+
+    # Compute mean and covariance from all windows (proxy for normal distribution)
+    mean = X_md.mean().values
+    cov = X_md.cov().values
+
+    # Regularize covariance to avoid singular matrix
+    cov += np.eye(cov.shape[0]) * 1e-6
+
+    try:
+        cov_inv = np.linalg.inv(cov)
+    except np.linalg.LinAlgError:
+        cov_inv = np.linalg.pinv(cov)
+
+    # Compute MD for each window
+    diffs = X_md.values - mean
+    md_scores = np.sqrt(np.sum(diffs @ cov_inv * diffs, axis=1))
+
+    # Normalize to 0-1 range
+    min_md, max_md = md_scores.min(), md_scores.max()
+    if max_md - min_md > 0:
+        norm_md = (md_scores - min_md) / (max_md - min_md)
+    else:
+        norm_md = np.zeros(len(md_scores))
+
+    return {k: s for k, s in zip(keys, norm_md)}
+
+
 def cross_channel_check(anomaly_summary):
     """Check how many channels flag the same window — multi-channel agreement
     is a strong signal of a real anomaly."""
@@ -393,7 +432,27 @@ def main():
                 print(f"   {iso_agreements}/{iso_total} RF-flagged windows also flagged by Isolation Forest")
                 print(f"   Agreement rate: {iso_agreements/iso_total*100:.1f}%")
 
-        # 3. Cross-channel analysis
+        # 3. Mahalanobis Distance cross-validation
+        print(f"\n📐 Mahalanobis Distance cross-validation:")
+        md_scores = mahalanobis_validate(df, sensor_cols, args.window)
+        md_agreements = 0
+        md_total = 0
+        if md_scores:
+            for _, row in flagged.iterrows():
+                key = (int(row['window_start']), row['column'])
+                if key in md_scores:
+                    md_total += 1
+                    if md_scores[key] > 0.6:
+                        md_agreements += 1
+            if md_total > 0:
+                print(f"   {md_agreements}/{md_total} RF-flagged windows also flagged by Mahalanobis Distance")
+                print(f"   Agreement rate: {md_agreements/md_total*100:.1f}%")
+            else:
+                print(f"   No overlapping windows to compare")
+        else:
+            print(f"   Could not compute MD scores")
+
+        # 4. Cross-channel analysis
         print(f"\n🔗 Cross-channel analysis:")
         cc = cross_channel_check(anomaly_summary)
         if not cc.empty:
@@ -407,7 +466,7 @@ def main():
                           f"Score {r['score']:.3f}  "
                           f"Channels: {r['channels']}")
 
-        # 4. Build detailed report
+        # 5. Build detailed report
         print(f"\n" + "=" * 70)
         print(f"  DETECTION SUMMARY")
         print(f"=" * 70)
@@ -435,12 +494,16 @@ def main():
                 print(f"      Isolation Forest agreement: {iso_agreements/iso_total*100:.0f}%")
             if not cc.empty:
                 print(f"      Multi-channel rate: {len(multi)/len(cc)*100:.0f}%")
+            if md_total > 0:
+                print(f"      Mahalanobis Distance agreement: {md_agreements/md_total*100:.0f}%")
 
     # Save detailed results
     if 'zdf' not in locals():
         zdf = pd.DataFrame()
     if 'iso_scores' not in locals():
         iso_scores = {}
+    if 'md_scores' not in locals():
+        md_scores = {}
     detail_rows = []
     for _, row in meta.iterrows():
         r = {
@@ -460,6 +523,10 @@ def main():
         if not has_labels and iso_scores:
             key = (r['window_start'], r['column'])
             r['iso_score'] = iso_scores.get(key, None)
+        # Add mahalanobis distance if available
+        if not has_labels and md_scores:
+            key = (r['window_start'], r['column'])
+            r['md_score'] = md_scores.get(key, None)
         detail_rows.append(r)
 
     detail_df = pd.DataFrame(detail_rows)
@@ -470,4 +537,4 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    main() 

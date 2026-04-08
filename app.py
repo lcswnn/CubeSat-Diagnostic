@@ -440,10 +440,13 @@ if st.button("Run Anomaly Detection", type="primary"):
         else:
             anomaly_rows = pd.DataFrame(columns=meta.columns)
         if not anomaly_rows.empty:
+            # Sort columns by their individual scores (highest first)
+            anomaly_rows = anomaly_rows.sort_values('anomaly_score', ascending=False)
             anomaly_summary = (
                 anomaly_rows.groupby(['window_start', 'window_end'])
                 .agg(
                     anomalous_columns=('column', lambda cols: ', '.join(cols)),
+                    column_scores=('anomaly_score', lambda scores: ', '.join(f'{s:.3f}' for s in scores)),
                     avg_score=('anomaly_score', 'mean')
                 )
                 .reset_index()
@@ -451,7 +454,7 @@ if st.button("Run Anomaly Detection", type="primary"):
                 .reset_index(drop=True)
             )
         else:
-            anomaly_summary = pd.DataFrame(columns=['window_start', 'window_end', 'anomalous_columns', 'avg_score'])
+            anomaly_summary = pd.DataFrame(columns=['window_start', 'window_end', 'anomalous_columns', 'column_scores', 'avg_score'])
         progress.progress(100, text="Done!")
         st.session_state['anomaly_summary'] = anomaly_summary
         st.session_state['anomaly_count'] = len(anomaly_summary)
@@ -501,7 +504,24 @@ if 'anomaly_summary' in st.session_state:
     for _, row in anomaly_summary.iterrows():
         severity_class, severity_text = severity_label(row['avg_score'])
         cols_list = [c.strip() for c in row['anomalous_columns'].split(',')]
-        col_tags = ''.join([f'<span style="display:inline-block;background:#21262d;border:1px solid #30363d;border-radius:4px;padding:2px 8px;margin:2px;font-size:12px;color:#8b949e;">{c}</span>' for c in cols_list])
+        scores_list = [float(s.strip()) for s in row.get('column_scores', '').split(',') if s.strip()] if 'column_scores' in row and pd.notna(row.get('column_scores')) else []
+
+        # Build tags with opacity scaled by individual score
+        tag_parts = []
+        for idx, c in enumerate(cols_list):
+            if idx < len(scores_list):
+                score = scores_list[idx]
+                opacity = 0.4 + 0.6 * min(score / 1.0, 1.0)
+                score_text = f' ({score:.2f})'
+            else:
+                opacity = 0.6
+                score_text = ''
+            tag_parts.append(
+                f'<span style="display:inline-block;background:#21262d;border:1px solid #30363d;'
+                f'border-radius:4px;padding:2px 8px;margin:2px;font-size:12px;'
+                f'color:rgba(139,148,158,{opacity:.2f});">{c}{score_text}</span>'
+            )
+        col_tags = ''.join(tag_parts)
 
         border_color = {"high": "#f85149", "medium": "#d29922", "low": "#3fb950"}[severity_class]
         score_bg = {"high": "#3d1a1a", "medium": "#2d2208", "low": "#0d2818"}[severity_class]
@@ -558,4 +578,4 @@ if 'anomaly_summary' in st.session_state:
         window_end=int(row['window_end']),
         score=row['avg_score']
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, use_container_width=True) 
