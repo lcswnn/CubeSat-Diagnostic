@@ -1,9 +1,9 @@
 # CubeSat-Diagnostic
 ## Intro
-CubeSat Diagnostic is a project created to help universities and other astronomers alike to analyze data recived from their CubeSat satellite and review any anomolies within the telemetry data. It seems many people have created academic papers and have investigated this issue in the past, but there does not seem to be a free, open-source resource where you could investigate CubeSat data to see if there is anything wrong with your project. ~41% of CubeSats have total or partial failure, and this project is here to mitigate the ones that fail due to resource inbalance, bugs within code, or other fixable errors once in Orbit.
+CubeSat Diagnostic is a project created to help universities and other astronomers alike to analyze data received from their CubeSat satellite and review any anomalies within the telemetry data. It seems many people have created academic papers and have investigated this issue in the past, but there does not seem to be a free, open-source resource where you could investigate CubeSat data to see if there is anything wrong with your project. A significant percentage of CubeSats have total or partial failure, and this project is here to mitigate the ones that fail due to resource imbalance, bugs within code, or other fixable errors once in Orbit.
 
 ## What It Does
-The user first uploads telemetry data recieved from their CubeSat into the Streamlit webapp, and the model auto-classifies the columns based on the values within each row of that column. This is done to filter out any columns that are not significant to anomaly investigation, such as datetime or geolocation. The user can override these within the app if needed. Once the user is happy with the columns the model will analyze, it will then go through windowed feature extraction and feed into a Random Forest Model that was trained on the OPSSAT-AD training dataset. The model will give each "anomaly" window a score: The higher the score, the bigger the anomaly. The user can then filter through the anomaly windows, filter what column is graphed, and look at what is most important to them.
+The user first uploads telemetry data received from their CubeSat into the Streamlit webapp, and the model auto-classifies the columns based on the values within each row of that column. This is done to filter out any columns that are not significant to anomaly investigation, such as datetime or geolocation. The user can override these within the app if needed. Once the user is happy with the columns the model will analyze, it will then go through windowed feature extraction and feed into a Random Forest Model that was trained on the OPSSAT-AD training dataset. The model will give each "anomaly" window a score: The higher the score, the bigger the anomaly. The user can then filter through the anomaly windows, filter what column is graphed, and look at what is most important to them.
 
 ## Quick Start
 
@@ -33,7 +33,7 @@ The user first uploads telemetry data recieved from their CubeSat into the Strea
 
 5. **Upload your telemetry file** — The app accepts `.csv` or `.xlsx` files. Sample datasets are included in the [data/](data/) directory (e.g., `data/telemetry.csv`, `data/NEPALISAT.xlsx`) if you want to test immediately.
 
-6. **Classify columns and run anomaly detection** — After upload, label each column (temperature, voltage, etc.), then trigger detection. The pre-trained Isolation Forest model (`model/model.pkl`) will flag anomalies and score them by severity.
+6. **Classify columns and run anomaly detection** — After upload, review the column exclusions and override if necessary, then trigger detection. The pre-trained Random Forest model (`model/model.pkl`) will flag anomalies and score them by severity.
 
 ## Limitations
 * Currently there is No temporal context — each window is scored independently, so it can't catch slow drifts or trends that develop over many windows
