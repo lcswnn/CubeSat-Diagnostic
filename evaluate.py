@@ -23,6 +23,7 @@ import numpy as np
 import pandas as pd
 from scipy import stats
 from scipy.signal import find_peaks
+from scipy.stats import percentileofscore
 from sklearn.ensemble import IsolationForest
 from sklearn.metrics import classification_report, confusion_matrix
 import joblib
@@ -211,41 +212,44 @@ def isolation_forest_validate(df, sensor_cols, window_size=500):
 
 
 def mahalanobis_validate(df, sensor_cols, window_size=500):
-    """Compute Mahalanobis distance for each window using training distribution.
-    Returns a dict of (window_start, col) -> md_score (normalized 0-1).
+    """Compute Mahalanobis distance per channel using that channel's own distribution.
+    Returns a dict of (window_start, col) -> percentile score (0-1).
     """
     feat_df = compute_features(df, sensor_cols, window_size)
     if feat_df.empty:
         return {}
 
-    keys = list(zip(feat_df['window_start'].astype(int), feat_df['column']))
-    X_md = feat_df.drop(columns=['window_start', 'window_end', 'column'])
-    X_md = add_derived_features(X_md)
+    feature_cols = [c for c in feat_df.columns if c not in ['window_start', 'window_end', 'column']]
+    result = {}
 
-    # Compute mean and covariance from all windows (proxy for normal distribution)
-    mean = X_md.mean().values
-    cov = X_md.cov().values
+    for col_name in feat_df['column'].unique():
+        col_mask = feat_df['column'] == col_name
+        col_feat = feat_df[col_mask].copy()
 
-    # Regularize covariance to avoid singular matrix
-    cov += np.eye(cov.shape[0]) * 1e-6
+        if len(col_feat) < 5:
+            continue
 
-    try:
-        cov_inv = np.linalg.inv(cov)
-    except np.linalg.LinAlgError:
-        cov_inv = np.linalg.pinv(cov)
+        X_md = col_feat[feature_cols].copy()
+        X_md = add_derived_features(X_md)
 
-    # Compute MD for each window
-    diffs = X_md.values - mean
-    md_scores = np.sqrt(np.sum(diffs @ cov_inv * diffs, axis=1))
+        mean = X_md.mean().values
+        cov = X_md.cov().values.copy()
+        cov += np.eye(cov.shape[0]) * 1e-6
 
-    # Normalize to 0-1 range
-    min_md, max_md = md_scores.min(), md_scores.max()
-    if max_md - min_md > 0:
-        norm_md = (md_scores - min_md) / (max_md - min_md)
-    else:
-        norm_md = np.zeros(len(md_scores))
+        try:
+            cov_inv = np.linalg.inv(cov)
+        except np.linalg.LinAlgError:
+            cov_inv = np.linalg.pinv(cov)
 
-    return {k: s for k, s in zip(keys, norm_md)}
+        diffs = X_md.values - mean
+        md_scores = np.sqrt(np.sum(diffs @ cov_inv * diffs, axis=1))
+
+        # Percentile within this channel's windows
+        for i, (_, row) in enumerate(col_feat.iterrows()):
+            key = (int(row['window_start']), col_name)
+            result[key] = percentileofscore(md_scores, md_scores[i]) / 100.0
+
+    return result
 
 
 def cross_channel_check(anomaly_summary):
@@ -442,7 +446,8 @@ def main():
                 key = (int(row['window_start']), row['column'])
                 if key in md_scores:
                     md_total += 1
-                    if md_scores[key] > 0.6:
+                    # Flag if window is above the 95th percentile of all MD scores
+                    if md_scores[key] > 0.95:
                         md_agreements += 1
             if md_total > 0:
                 print(f"   {md_agreements}/{md_total} RF-flagged windows also flagged by Mahalanobis Distance")
@@ -537,4 +542,4 @@ def main():
 
 
 if __name__ == '__main__':
-    main() 
+    main()
