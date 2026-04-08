@@ -35,6 +35,10 @@ The user first uploads telemetry data received from their CubeSat into the Strea
 
 6. **Classify columns and run anomaly detection** — After upload, review the column exclusions and override if necessary, then trigger detection. The pre-trained Random Forest model (`model/model.pkl`) will flag anomalies and score them by severity.
 
+## Data Format
+
+The app accepts `.csv` or `.xlsx` files containing numeric telemetry data. Each row should represent a single timestep and each column a telemetry channel (e.g., battery voltage, temperature, gyro readings). The app auto-detects which columns are sensor data and excludes timestamps, counters, and binary status flags — but you can override any classification before running detection. Files should have at least a few hundred rows for the windowing to produce meaningful results. Missing values are handled via `dropna`, but large gaps may affect feature quality.
+
 ## Limitations
 * Currently there is No temporal context — each window is scored independently, so it can't catch slow drifts or trends that develop over many windows
 * The model assumes roughly uniform sampling rate (hardcoded sampling=1), so irregularly sampled or gappy data could produce misleading features
@@ -49,8 +53,10 @@ The user first uploads telemetry data received from their CubeSat into the Strea
 
 ## Images
 
+**Uploading Data to Site**
 <img width="1545" height="955" alt="Screenshot 2026-04-07 at 9 50 17 PM" src="https://github.com/user-attachments/assets/0ab94c51-0f94-452d-8edc-e3653693d86f" />
 
+**Anomaly Window Detection**
 <img width="1545" height="955" alt="Screenshot 2026-04-07 at 9 50 52 PM" src="https://github.com/user-attachments/assets/ecc3633b-48c0-4b3a-a5d0-35088edb2821" />
 
 
