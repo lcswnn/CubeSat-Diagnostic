@@ -63,7 +63,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🛰 CubeSat Diagnostic Tool")
+st.title("CubeSat Diagnostic Tool")
 st.write("Upload satellite telemetry data to detect anomalies.")
 
 df = pd.DataFrame({'Column 1': [1, 2, 3, 4]})
@@ -231,11 +231,11 @@ def add_derived_features(frame):
 
 def severity_label(score):
     if score >= 0.85:
-        return "high", "🔴 High"
+        return "high", "High"
     elif score >= 0.70:
-        return "medium", "🟡 Medium"
+        return "medium", "Medium"
     else:
-        return "low", "🟢 Low"
+        return "low", "Low"
 
 
 def plot_anomaly_window(df, plot_col, window_start, window_end, score):
@@ -362,17 +362,11 @@ if uploaded_file is not None:
     with st.expander(f"Column filter — {len(sensor_cols)} sensor channels, {len(excluded)} auto-excluded", expanded=False):
         st.caption("Columns are automatically classified by statistical analysis. Override any column below.")
 
-        _CATEGORY_ICONS = {
-            'sensor': '📡', 'binary': '🔘', 'counter': '🔢',
-            'position': '🌍', 'timestamp': '🕐', 'constant': '⬜'
-        }
-
         for cat in ['binary', 'counter', 'position', 'timestamp', 'constant']:
             cat_cols = excluded[excluded['category'] == cat]
             if cat_cols.empty:
                 continue
-            icon = _CATEGORY_ICONS.get(cat, '')
-            st.markdown(f"**{icon} {cat.title()}** — {len(cat_cols)} columns excluded")
+            st.markdown(f"**{cat.title()}** — {len(cat_cols)} columns excluded")
             for _, r in cat_cols.iterrows():
                 c1, c2, c3 = st.columns([3, 5, 2])
                 with c1:
@@ -383,7 +377,7 @@ if uploaded_file is not None:
                     if st.checkbox("Include", key=f"inc_{r['column']}"):
                         st.session_state['col_overrides'][r['column']] = 'sensor'
 
-        st.markdown(f"**📡 Sensor** — {len(sensor_cols)} columns included")
+        st.markdown(f"**Sensor** — {len(sensor_cols)} columns included")
         exclude_choices = st.multiselect(
             "Exclude any sensor columns:",
             options=sensor_cols,
@@ -410,7 +404,7 @@ if uploaded_file is not None:
 # UI — Run Detection
 # ---------------------------------------------------------------------------
 
-if st.button("🔍 Run Anomaly Detection", type="primary"):
+if st.button("Run Anomaly Detection", type="primary"):
     sensor_cols = st.session_state.get('final_sensor_cols', [])
     if not sensor_cols:
         st.error("No sensor columns to analyze. Check the column filter above.")
@@ -492,9 +486,9 @@ if 'anomaly_summary' in st.session_state:
     with col2:
         st.metric("Anomalous Windows", f"{anomaly_count:,}")
     with col3:
-        st.metric("🔴 High Severity", f"{high_count}")
+        st.metric("High Severity", f"{high_count}")
     with col4:
-        st.metric("🟡 Medium Severity", f"{medium_count}")
+        st.metric("Medium Severity", f"{medium_count}")
 
     if anomaly_summary.empty:
         st.success("No anomalies detected in this file.")
