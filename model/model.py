@@ -5,6 +5,7 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score, classification_report
 import joblib
 
+# PUT DATA WITHIN DATA FOLDER TO READ -- CHANGE THIS AS NEEDED TO TRAIN MODEL WITH DIFFERENT DATASETS.
 df = pd.read_csv("../data/dataset.csv")
 
 # --- Derived features (computed from existing per-window stats) ---
