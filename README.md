@@ -49,6 +49,8 @@ Optional flags: `--threshold 0.70`, `--window 500`, `--model model/model.pkl`, `
 
 The app accepts `.csv` or `.xlsx` files containing numeric telemetry data. Each row should represent a single timestep and each column a telemetry channel (e.g., battery voltage, temperature, gyro readings). The app auto-detects which columns are sensor data and excludes timestamps, counters, and binary status flags — but you can override any classification before running detection. Files should have at least a few hundred rows for the windowing to produce meaningful results. Missing values are handled via `dropna`, but large gaps may affect feature quality.
 
+**For large files (>20MB), we recommend running locally for better performance**
+
 ## Limitations
 * Currently there is no temporal context — each window is scored independently, so it can't catch slow drifts or trends that develop over many windows
 * The model assumes roughly uniform sampling rate (hardcoded sampling=1), so irregularly sampled or gappy data could produce misleading features
